@@ -1,0 +1,18 @@
+# Exclude the Hugo repository (it has its own Git repo)
+/sunilkandola-hugo/
+
+# Exclude dynamic state and logs
+/system_state.json
+/error_log.txt
+
+# Exclude local brief outputs
+/weekly_brief_*
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables
+.env

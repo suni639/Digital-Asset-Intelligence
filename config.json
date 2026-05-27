@@ -1,0 +1,79 @@
+{
+  "project_id": "DA-INTEL-01",
+  "sources": {
+    "ledger_insights": {
+      "name": "Ledger Insights",
+      "url": "https://www.ledgerinsights.com/category/news/",
+      "strategy": "Crawl main news archive layout container using browser, parsing articles from past 7 days."
+    },
+    "finextra": {
+      "name": "Finextra",
+      "url": "https://www.finextra.com/rss/news.aspx",
+      "strategy": "Use browser tool with standard desktop user-agent headers to bypass Turnstile firewall."
+    },
+    "blockworks": {
+      "name": "Blockworks",
+      "url": "https://blockworks.co/feed",
+      "strategy": "Parse standard RSS/feed and filter out retail macro-crypto hype, price percentages, or token trading narratives."
+    },
+    "the_block": {
+      "name": "The Block",
+      "url": "https://www.theblock.co/rss.xml",
+      "strategy": "Parse standard RSS/feed and filter out retail macro-crypto hype, price percentages, or token trading narratives."
+    },
+    "bis": {
+      "name": "Bank for International Settlements (BIS)",
+      "url": "https://www.bis.org/doclist/rss_all_categories.rss",
+      "strategy": "Parse direct research RSS feed."
+    },
+    "atlantic_council": {
+      "name": "Atlantic Council",
+      "url": "https://www.atlanticcouncil.org/cbdctracker/",
+      "strategy": "Track geo-economics CBDC dashboard tracking anchor URL."
+    }
+  },
+  "filtering": {
+    "allowed_attributes": [
+      "Tokenised commercial bank liabilities",
+      "Deposit tokens",
+      "GBTD",
+      "JPM Coin",
+      "Delivery vs. Payment (DvP)",
+      "Atomic settlement mechanics",
+      "Real-World Asset (RWA) tokenisation",
+      "Sovereign bonds",
+      "Private credit",
+      "BUIDL",
+      "Central Bank Digital Currencies (CBDC)",
+      "Wholesale CBDC infrastructure",
+      "EU MiCA",
+      "UK Property Digital Assets Bill",
+      "US payment stablecoin frameworks",
+      "SEC asset custody rules",
+      "SAB 121",
+      "DTCC",
+      "Euroclear",
+      "Swift network orchestration"
+    ],
+    "forbidden_attributes": [
+      "Token spot price movements",
+      "Percent gains/losses",
+      "Technical chart analysis",
+      "Retail exchange listings",
+      "Retail trading volumes",
+      "Consumer wallet integrations",
+      "Speculative market commentary",
+      "Influencer sentiment",
+      "DeFi yield farms",
+      "memcoins",
+      "NFTs"
+    ]
+  },
+  "delivery": {
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "use_starttls": true,
+    "retry_count": 3,
+    "retry_interval_minutes": 15
+  }
+}
