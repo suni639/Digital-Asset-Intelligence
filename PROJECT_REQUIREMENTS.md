@@ -135,4 +135,4 @@ Create the Antigravity project environment, define the `system_state.json`, and 
 * **Phase 2 (Day 2-3): Scraper Optimization & Prompts**
 Deploy Subagent A to scan the master list URLs. Fine-tune the "Noise Gate" parameters to ensure 100% filtering accuracy of speculative retail price tickers.
 * **Phase 3 (Day 4): Automation Activation**
-Deploy the `/schedule` cron task (`0 9 * * 5`). Perform a live end-to-end test execution to verify a well-formatted British English markdown brief lands directly in your email inbox by Friday morning.
+Deploy the `/schedule` cron task (`0 8 * * 1`). Perform a live end-to-end test execution to verify a well-formatted British English markdown brief lands directly in your email inbox by Monday morning.
