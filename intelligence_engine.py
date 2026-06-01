@@ -105,17 +105,26 @@ def log_error(msg):
         f.write(f"[{timestamp}] ERROR: {msg}\n")
     print(f"ERROR: {msg}", file=sys.stderr)
 
-def fetch_url(url):
+def fetch_url(url, silent_on_403=False):
     try:
         r = requests.get(url, headers=HEADERS, timeout=20)
         r.raise_for_status()
         return r
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 403:
+            if silent_on_403:
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
+                    f.write(f"[{timestamp}] WARNING: HTTP 403 Forbidden for {url}. Crawling blocked, using RSS summary instead.\n")
+                return None
+        log_error(f"Failed to fetch {url}: {e}")
+        return None
     except Exception as e:
         log_error(f"Failed to fetch {url}: {e}")
         return None
 
 def extract_article_body(url):
-    r = fetch_url(url)
+    r = fetch_url(url, silent_on_403=True)
     if not r:
         return ""
     try:
