@@ -12,11 +12,11 @@ import re
 
 # 1. Self-install dependencies if missing (primarily for local execution safety)
 def install_dependencies():
-    required_packages = ["requests", "beautifulsoup4", "google-generativeai", "markdown"]
+    required_packages = ["requests", "beautifulsoup4", "google-genai", "markdown"]
     for pkg in required_packages:
         try:
-            if pkg == "google-generativeai":
-                __import__("google.generativeai")
+            if pkg == "google-genai":
+                from google import genai
             else:
                 __import__(pkg)
         except ImportError:
@@ -33,7 +33,7 @@ install_dependencies()
 import requests
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
-import google.generativeai as genai
+from google import genai
 import markdown
 
 # Helper to fetch environment variables, supporting fallback to Windows registry for local setups
@@ -90,9 +90,19 @@ try:
         with open(STATE_PATH, "r", encoding="utf-8") as f:
             state = json.load(f)
     else:
-        state = {"last_run": None, "processed_urls": []}
+        state = {"last_run": None, "processed_urls": {}}
 except Exception as e:
-    state = {"last_run": None, "processed_urls": []}
+    state = {"last_run": None, "processed_urls": {}}
+
+# Automatic migration from list format to dictionary format
+if isinstance(state.get("processed_urls"), list):
+    print("Migrating system state format: converting URL list to timestamped dictionary...")
+    new_processed = {}
+    for url in state["processed_urls"]:
+        new_processed[url] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    state["processed_urls"] = new_processed
+elif not isinstance(state.get("processed_urls"), dict):
+    state["processed_urls"] = {}
 
 # 3. Scraping Functions
 HEADERS = {
@@ -123,9 +133,31 @@ def fetch_url(url, silent_on_403=False):
         log_error(f"Failed to fetch {url}: {e}")
         return None
 
+def fetch_jina_reader(url):
+    jina_url = f"https://r.jina.ai/{url}"
+    headers = {
+        "User-Agent": HEADERS["User-Agent"]
+    }
+    try:
+        print(f"Attempting Jina Reader crawling fallback for: {url}")
+        r = requests.get(jina_url, headers=headers, timeout=20)
+        r.raise_for_status()
+        if r.text and len(r.text.strip()) > 100:
+            return r.text
+        return ""
+    except Exception as e:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] WARNING: Jina Reader fallback failed for {url}: {e}\n")
+        return ""
+
 def extract_article_body(url):
     r = fetch_url(url, silent_on_403=True)
     if not r:
+        # Fallback to Jina Reader to bypass Cloudflare 403 blocks
+        jina_text = fetch_jina_reader(url)
+        if jina_text:
+            return jina_text[:4000]
         return ""
     try:
         soup = BeautifulSoup(r.text, 'html.parser')
@@ -158,7 +190,7 @@ def scrape_ledger_insights():
                 if a:
                     title = a.get_text(strip=True)
                     link = a.get('href')
-                    if link and link not in state.get("processed_urls", []):
+                    if link and link not in state.get("processed_urls", {}):
                         body = extract_article_body(link)
                         articles.append({
                             "title": title,
@@ -205,7 +237,7 @@ def parse_rss_feed(source_name, feed_url):
             
             desc_cleaned = BeautifulSoup(desc, 'html.parser').get_text(strip=True) if desc else ""
             
-            if link and link not in state.get("processed_urls", []):
+            if link and link not in state.get("processed_urls", {}):
                 body = extract_article_body(link)
                 if not body:
                     body = desc_cleaned
@@ -242,7 +274,7 @@ def scrape_atlantic_council_tracker():
         summary_info += " Brazil's Drex wholesale pilot active. US focusing on Project Cedar wholesale interbank settlement."
         
         tracker_key = f"atlantic_council_cbdc_tracker_{datetime.datetime.now().strftime('%Y-%W')}"
-        if tracker_key not in state.get("processed_urls", []):
+        if tracker_key not in state.get("processed_urls", {}):
             articles.append({
                 "title": "Atlantic Council CBDC Tracker Update - May 2026",
                 "url": tracker_key,
@@ -292,7 +324,7 @@ def run_gemini_synthesis(articles):
         log_error("GEMINI_API_KEY environment variable is not set. Synthesis skipped.")
         return None
         
-    genai.configure(api_key=gemini_key)
+    client = genai.Client(api_key=gemini_key)
     
     # Construct input payload
     articles_data = []
@@ -355,8 +387,11 @@ Here are the harvested articles:
 """
     
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content(prompt)
+        gemini_model = get_env_var("GEMINI_MODEL") or "gemini-2.5-flash"
+        response = client.models.generate_content(
+            model=gemini_model,
+            contents=prompt,
+        )
         return response.text
     except Exception as e:
         log_error(f"Gemini API generation failed: {e}")
@@ -556,6 +591,33 @@ def send_email(subject, plain_body, html_body, recipient_email):
             else:
                 return False
 
+def prune_state(state_dict, max_age_days=60):
+    if "processed_urls" not in state_dict or not isinstance(state_dict["processed_urls"], dict):
+        return state_dict
+        
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cutoff = now - datetime.timedelta(days=max_age_days)
+    
+    pruned_urls = {}
+    pruned_count = 0
+    for url, ts_str in state_dict["processed_urls"].items():
+        try:
+            ts = datetime.datetime.fromisoformat(ts_str)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=datetime.timezone.utc)
+            
+            if ts >= cutoff:
+                pruned_urls[url] = ts_str
+            else:
+                pruned_count += 1
+        except Exception:
+            pruned_urls[url] = ts_str
+            
+    state_dict["processed_urls"] = pruned_urls
+    if pruned_count > 0:
+        print(f"Pruned {pruned_count} URLs older than {max_age_days} days from the system state.")
+    return state_dict
+
 # 8. Main Workflow Execution
 def main():
     print(f"Intelligence engine run started at: {datetime.datetime.now().isoformat()}")
@@ -563,6 +625,9 @@ def main():
     # Startup validation of environment variables
     if not verify_environment():
         sys.exit(1)
+        
+    global state
+    state = prune_state(state, max_age_days=60)
     
     # Step 1: Ingestion
     new_articles = ingest_all()
@@ -640,7 +705,7 @@ summary: "Weekly synthesis of wholesale banking, CBDCs, RWAs, and digital asset 
     state["last_run"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     for art in new_articles:
         if art["url"] not in state["processed_urls"]:
-            state["processed_urls"].append(art["url"])
+            state["processed_urls"][art["url"]] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             
     try:
         with open(STATE_PATH, "w", encoding="utf-8") as f:
