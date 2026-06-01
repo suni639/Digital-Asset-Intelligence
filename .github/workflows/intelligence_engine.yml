@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
     # Allows manual execution from the GitHub Actions UI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 permissions:
   contents: write
 
