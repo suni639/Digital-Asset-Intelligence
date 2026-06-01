@@ -14,14 +14,14 @@ The workflow below details how the engine operates autonomously in an ephemeral 
 
 ```mermaid
 graph TD
-    A[Sources Ingestion] -->|Harvest RSS & Web Trackers| B[Ingestion Layer]
+    A[Sources Ingestion] -->|Harvest RSS and Web Trackers| B[Ingestion Layer]
     B -->|Ingested Articles| C[The Noise Gate Filter]
-    C -->|Exclude Retail Price & Speculation| D[Gemini Synthesis Layer]
+    C -->|Exclude Retail Price and Speculation| D[Gemini Synthesis Layer]
     D -->|Synthesise in British English| E[Output Formatting]
     E -->|Write Markdown Brief| F[Hugo Website Publish]
     E -->|Format HTML Newsletter| G[Email Dispatch via SMTP]
-    F -->|Commit State & Push| H[Repository State Commit]
-    G -->|Delivery Failsafe Check| I[Logs & Error Audit]
+    F -->|Commit State and Push| H[Repository State Commit]
+    G -->|Delivery Failsafe Check| I[Logs and Error Audit]
 ```
 
 ---
