@@ -1,0 +1,62 @@
+name: Digital Asset Intelligence Engine Scheduled Run
+
+on:
+  schedule:
+    # Run every Monday at 07:00 UTC (08:00 AM UK time during BST, 07:00 AM UK time during GMT)
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+    # Allows manual execution from the GitHub Actions UI
+
+permissions:
+  contents: write
+
+jobs:
+  run-engine:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch all history so git push works cleanly
+          fetch-depth: 0
+
+      - name: Checkout Hugo repository
+        uses: actions/checkout@v4
+        with:
+          repository: suni639/sunilkandola-hugo
+          path: sunilkandola-hugo
+          token: ${{ secrets.HUGO_REPO_PAT }}
+          fetch-depth: 0
+
+      - name: Configure Git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run intelligence engine
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: |
+          python intelligence_engine.py
+
+      - name: Commit and push updated system state
+        run: |
+          # Use force add because system_state.json is listed in .gitignore
+          git add --force system_state.json
+          git commit -m "chore: update system state [skip ci]" || echo "No changes to state"
+          git push origin HEAD:main

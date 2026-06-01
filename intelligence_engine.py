@@ -5,12 +5,12 @@ import time
 import datetime
 import subprocess
 import smtplib
+import warnings
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import xml.etree.ElementTree as ET
 import re
 
-# 1. Self-Install Dependencies if Missing
+# 1. Self-install dependencies if missing (primarily for local execution safety)
 def install_dependencies():
     required_packages = ["requests", "beautifulsoup4", "google-generativeai", "markdown"]
     for pkg in required_packages:
@@ -31,11 +31,44 @@ def install_dependencies():
 install_dependencies()
 
 import requests
-import warnings
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 import google.generativeai as genai
 import markdown
+
+# Helper to fetch environment variables, supporting fallback to Windows registry for local setups
+def get_env_var(name):
+    val = os.environ.get(name)
+    if not val and sys.platform == "win32":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment")
+            val, _ = winreg.QueryValueEx(key, name)
+            winreg.CloseKey(key)
+        except Exception:
+            pass
+    return val
+
+# Verify all mandatory environment variables are set before proceeding
+def verify_environment():
+    missing_vars = []
+    required_vars = ["GEMINI_API_KEY", "SMTP_USER", "SMTP_PASS"]
+    
+    for var in required_vars:
+        if not get_env_var(var):
+            missing_vars.append(var)
+            
+    if missing_vars:
+        print(f"CRITICAL ERROR: Missing required environment variables: {', '.join(missing_vars)}", file=sys.stderr)
+        print("Please ensure these are configured in your system environment or as GitHub Repository Secrets.", file=sys.stderr)
+        
+        # Log to error_log.txt as a fallback
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] ERROR: Startup aborted due to missing variables: {', '.join(missing_vars)}\n")
+            
+        return False
+    return True
 
 # 2. Configuration & State Paths
 WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -51,7 +84,7 @@ except Exception as e:
     print(f"Error loading config.json: {e}", file=sys.stderr)
     sys.exit(1)
 
-# Load State
+# Load State (Runs cleanly from scratch if system_state.json does not exist)
 try:
     if os.path.exists(STATE_PATH):
         with open(STATE_PATH, "r", encoding="utf-8") as f:
@@ -244,10 +277,10 @@ def ingest_all():
     return all_articles
 
 # 5. Gemini Analysis & Synthesis
-def run_gemini_analysis(articles):
-    gemini_key = os.environ.get("GEMINI_API_KEY")
+def run_gemini_synthesis(articles):
+    gemini_key = get_env_var("GEMINI_API_KEY")
     if not gemini_key:
-        log_error("GEMINI_API_KEY environment variable is not set.")
+        log_error("GEMINI_API_KEY environment variable is not set. Synthesis skipped.")
         return None
         
     genai.configure(api_key=gemini_key)
@@ -268,7 +301,7 @@ Content: {art['content']}
     
     prompt = f"""
 You are the lead Institutional Analyst for the Institutional Digital Asset Intelligence Engine (Project ID: DA-INTEL-01).
-Your task is to apply a strict binary filter ("The Noise Gate") to the following harvested articles and synthesize them into a highly professional weekly briefing.
+Your task is to apply a strict binary filter ("The Noise Gate") to the following harvested articles and synthesise them into a highly professional weekly briefing.
 
 Allowed Content Attributes (High-Signal):
 - Tokenised commercial bank liabilities (Deposit tokens, JPM Coin, GBTD).
@@ -471,11 +504,11 @@ def convert_markdown_to_newsletter_html(subject, date_str, markdown_content):
 
 # 7. Email Delivery Layer (Multipart MIME)
 def send_email(subject, plain_body, html_body, recipient_email):
-    smtp_user = os.environ.get('SMTP_USER')
-    smtp_pass = os.environ.get('SMTP_PASS')
+    smtp_user = get_env_var('SMTP_USER')
+    smtp_pass = get_env_var('SMTP_PASS')
     
     if not smtp_user or not smtp_pass:
-        log_error("SMTP_USER or SMTP_PASS environment variables are not set.")
+        log_error("SMTP_USER or SMTP_PASS environment variables are not set. Email dispatch aborted.")
         return False
         
     msg = MIMEMultipart('alternative')
@@ -487,11 +520,17 @@ def send_email(subject, plain_body, html_body, recipient_email):
     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
     
     max_retries = 3
-    retry_interval = 15 * 60  # 15 minutes
+    
+    # Custom retry sleep intervals:
+    # If running inside GitHub Actions, fail fast (10s intervals) to avoid burning user's runner minutes.
+    # Otherwise, wait 15 minutes as per local schedule requirements.
+    is_github_actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    retry_interval = 10 if is_github_actions else 15 * 60
     
     for attempt in range(1, max_retries + 1):
         try:
-            server = smtplib.SMTP('smtp.gmail.com', 587)
+            print(f"Connecting to SMTP server (attempt {attempt}/{max_retries})...")
+            server = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
             server.ehlo()
             server.starttls()
             server.ehlo()
@@ -503,27 +542,32 @@ def send_email(subject, plain_body, html_body, recipient_email):
         except Exception as e:
             log_error(f"Email delivery attempt {attempt} failed: {str(e)}")
             if attempt < max_retries:
+                print(f"Waiting {retry_interval} seconds before retrying...")
                 time.sleep(retry_interval)
             else:
                 return False
 
-# 8. Main Workflow execution
+# 8. Main Workflow Execution
 def main():
-    print(f"Weekly run started at: {datetime.datetime.now().isoformat()}")
+    print(f"Intelligence engine run started at: {datetime.datetime.now().isoformat()}")
     
-    # Step 1: Ingest
+    # Startup validation of environment variables
+    if not verify_environment():
+        sys.exit(1)
+    
+    # Step 1: Ingestion
     new_articles = ingest_all()
     if not new_articles:
-        print("No new articles discovered.")
+        print("No new articles discovered since the last execution.")
         return
         
     print(f"Ingested {len(new_articles)} new potential articles.")
     
-    # Step 2: Analyse & Synthesise
-    brief_content = run_gemini_analysis(new_articles)
+    # Step 2: Synthesis
+    brief_content = run_gemini_synthesis(new_articles)
     if not brief_content:
-        print("Brief generation failed or no conforming content.")
-        return
+        print("Brief generation failed: empty synthesis returned from model.")
+        sys.exit(1)
         
     # Step 3: Write Output File to Hugo content directory
     today_str = datetime.date.today().isoformat()
@@ -531,10 +575,10 @@ def main():
     hugo_content_dir = os.path.join(WORKSPACE_DIR, "sunilkandola-hugo", "content", "intel")
     brief_filepath = os.path.join(hugo_content_dir, brief_filename)
     
-    # Generate Hugo YAML Front Matter (omitted from the email but included in static site post)
+    # Generate Hugo YAML Front Matter
     front_matter = f"""---
 title: "Digital Asset Digest: {datetime.date.today().strftime('%d %B %Y')}"
-date: {datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S+00:00')}
+date: {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')}
 draft: false
 tags: ["digital-assets", "cbdc", "regulation", "tokenisation"]
 categories: ["Intelligence"]
@@ -550,12 +594,13 @@ summary: "Weekly synthesis of wholesale banking, CBDCs, RWAs, and digital asset 
         print(f"Brief written to Hugo content directory: {brief_filepath}")
     except Exception as e:
         log_error(f"Failed to write Hugo brief file: {e}")
+        # Note: Do not exit here; continue to send email and save files locally
         
     # Step 4: Convert to HTML Newsletter
     subject = f"Digital Asset Digest: {today_str}"
     html_content = convert_markdown_to_newsletter_html(subject, today_str, brief_content)
     
-    # Save HTML version locally as well (outside Hugo)
+    # Save HTML version locally (outside Hugo content layout)
     html_filename = f"weekly_brief_{today_str}.html"
     html_filepath = os.path.join(WORKSPACE_DIR, html_filename)
     try:
@@ -565,14 +610,25 @@ summary: "Weekly synthesis of wholesale banking, CBDCs, RWAs, and digital asset 
     except Exception as e:
         log_error(f"Failed to write HTML file: {e}")
 
+    # Save Markdown version locally in workspace
+    md_filepath = os.path.join(WORKSPACE_DIR, f"weekly_brief_{today_str}.md")
+    try:
+        with open(md_filepath, "w", encoding="utf-8") as f:
+            f.write(brief_content)
+        print(f"Markdown brief saved to: {md_filepath}")
+    except Exception as e:
+        log_error(f"Failed to write local Markdown file: {e}")
+
     # Step 5: Deliver via Email
-    recipient = os.environ.get('SMTP_USER') # default to self-sending
+    sender = get_env_var('SMTP_USER')
+    recipient = get_env_var('RECIPIENT_EMAIL')
+    if not recipient:
+        recipient = sender # Fallback to sending to oneself
+        
+    email_success = send_email(subject, brief_content, html_content, recipient)
     
-    success = send_email(subject, brief_content, html_content, recipient)
-    
-    # Step 6: Update state & Run Git Auto-Publish (always, regardless of email status)
-    state["last_run"] = datetime.datetime.utcnow().isoformat()
-    # Add the URLs of the processed articles to the state
+    # Step 6: Commit state updates & execute Git auto-publish
+    state["last_run"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     for art in new_articles:
         if art["url"] not in state["processed_urls"]:
             state["processed_urls"].append(art["url"])
@@ -580,28 +636,34 @@ summary: "Weekly synthesis of wholesale banking, CBDCs, RWAs, and digital asset 
     try:
         with open(STATE_PATH, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2)
-        print("System state successfully committed.")
+        print("System state successfully committed locally.")
     except Exception as e:
         log_error(f"Failed to save system state: {e}")
 
-    # Git Auto-Publish to Hugo repo (always runs, email success is separate)
+    # Git Auto-Publish to Hugo repo (if exists)
     hugo_dir = os.path.join(WORKSPACE_DIR, "sunilkandola-hugo")
-    try:
-        print("Committing and pushing to Hugo repository...")
-        subprocess.run(["git", "add", "content/intel/"], cwd=hugo_dir, check=True)
-        subprocess.run(["git", "commit", "-m", f"Auto-publish weekly brief {today_str}"], cwd=hugo_dir, check=True)
-        push_res = subprocess.run(["git", "push"], cwd=hugo_dir, capture_output=True, text=True)
-        if push_res.returncode == 0:
-            print("Successfully pushed to Hugo remote repository.")
-        else:
-            log_error(f"Git push failed (possibly credentials missing): {push_res.stderr.strip()}")
-    except Exception as e:
-        log_error(f"Failed to run Git auto-publish: {e}")
+    if os.path.exists(os.path.join(hugo_dir, ".git")):
+        try:
+            print("Committing and pushing to Hugo repository...")
+            subprocess.run(["git", "add", "content/intel/"], cwd=hugo_dir, check=True)
+            subprocess.run(["git", "commit", "-m", f"Auto-publish weekly brief {today_str}"], cwd=hugo_dir, check=True)
+            push_res = subprocess.run(["git", "push"], cwd=hugo_dir, capture_output=True, text=True)
+            if push_res.returncode == 0:
+                print("Successfully pushed to Hugo remote repository.")
+            else:
+                log_error(f"Git push failed: {push_res.stderr.strip()}")
+                sys.exit(1)
+        except Exception as e:
+            log_error(f"Failed to run Git auto-publish on Hugo repo: {e}")
+            sys.exit(1)
+    else:
+        print("Hugo Git repository not found at location. Skipping auto-publish steps.")
 
-    if success:
+    if email_success:
         print("Email delivered successfully.")
     else:
-        print("Email delivery failed — brief was still published to the site.")
+        print("Email delivery failed — brief was still generated and published.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
