@@ -387,7 +387,7 @@ Here are the harvested articles:
 """
     
     try:
-        gemini_model = get_env_var("GEMINI_MODEL") or "gemini-2.5-flash"
+        gemini_model = get_env_var("GEMINI_MODEL") or "gemini-3.5-flash"
         response = client.models.generate_content(
             model=gemini_model,
             contents=prompt,
